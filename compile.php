@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
+const MAX_PROJECT_SIZE = 15 * 1024 * 1024;
+const MAX_LOG_LENGTH = 12000;
 
 function fail(int $code, string $message, string $log = ''): void {
     http_response_code($code);
@@ -13,10 +15,22 @@ function safePath(string $path): bool {
     if ($path === '' || str_starts_with($path, '/') || str_contains($path, '..')) {
         return false;
     }
-    return (bool) preg_match('/^[a-zA-Z0-9_\.\/-]+$/', $path);
+    return (bool) preg_match('/^[a-zA-Z0-9_\.\/\-]+$/', $path);
 }
 
-function runCommand(string $cmd, string $cwd, int $timeout = 20): array {
+function findExecutable(string $name): ?string {
+    $path = getenv('PATH');
+    if (!$path) return null;
+    foreach (explode(PATH_SEPARATOR, $path) as $dir) {
+        $candidate = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
+        if (is_file($candidate) && is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+    return null;
+}
+
+function runCommand(array $cmd, string $cwd, int $timeout = 20): array {
     $descriptors = [
         1 => ['pipe', 'w'],
         2 => ['pipe', 'w'],
@@ -61,7 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     fail(405, 'Método não permitido.');
 }
 
-if (!trim((string) shell_exec('command -v pdflatex'))) {
+$pdflatex = findExecutable('pdflatex');
+if (!$pdflatex) {
     fail(500, 'pdflatex não está disponível no servidor.');
 }
 
@@ -107,7 +122,7 @@ foreach ($files as $path => $entry) {
     }
 
     $totalBytes += strlen($decoded);
-    if ($totalBytes > 15 * 1024 * 1024) {
+    if ($totalBytes > MAX_PROJECT_SIZE) {
         fail(400, 'Projeto excede limite de 15MB.');
     }
 
@@ -127,10 +142,8 @@ if (!is_file($tmpRoot . '/' . $mainFile)) {
 
 $log = '';
 $mainBase = pathinfo($mainFile, PATHINFO_FILENAME);
-$mainArg = escapeshellarg($mainFile);
-$mainBaseArg = escapeshellarg($mainBase);
 
-[$code1, $out1, $err1] = runCommand("pdflatex -interaction=nonstopmode -halt-on-error $mainArg", $tmpRoot, 30);
+[$code1, $out1, $err1] = runCommand([$pdflatex, '-interaction=nonstopmode', '-halt-on-error', $mainFile], $tmpRoot, 30);
 $log .= $out1 . "\n" . $err1;
 
 $hasBib = false;
@@ -141,13 +154,14 @@ foreach (array_keys($files) as $f) {
     }
 }
 
-if ($code1 === 0 && $hasBib && trim((string) shell_exec('command -v bibtex'))) {
-    [$codeBib, $outBib, $errBib] = runCommand("bibtex $mainBaseArg", $tmpRoot, 30);
+$bibtex = findExecutable('bibtex');
+if ($code1 === 0 && $hasBib && $bibtex) {
+    [$codeBib, $outBib, $errBib] = runCommand([$bibtex, $mainBase], $tmpRoot, 30);
     $log .= "\n" . $outBib . "\n" . $errBib;
     if ($codeBib === 0) {
-        [$code2, $out2, $err2] = runCommand("pdflatex -interaction=nonstopmode -halt-on-error $mainArg", $tmpRoot, 30);
+        [$code2, $out2, $err2] = runCommand([$pdflatex, '-interaction=nonstopmode', '-halt-on-error', $mainFile], $tmpRoot, 30);
         $log .= "\n" . $out2 . "\n" . $err2;
-        [$code3, $out3, $err3] = runCommand("pdflatex -interaction=nonstopmode -halt-on-error $mainArg", $tmpRoot, 30);
+        [$code3, $out3, $err3] = runCommand([$pdflatex, '-interaction=nonstopmode', '-halt-on-error', $mainFile], $tmpRoot, 30);
         $log .= "\n" . $out3 . "\n" . $err3;
         $code1 = $code3;
     }
@@ -155,16 +169,16 @@ if ($code1 === 0 && $hasBib && trim((string) shell_exec('command -v bibtex'))) {
 
 $pdfPath = $tmpRoot . '/' . pathinfo($mainFile, PATHINFO_FILENAME) . '.pdf';
 if ($code1 !== 0 || !is_file($pdfPath)) {
-    fail(422, 'Erro na compilação LaTeX.', mb_substr($log, 0, 12000));
+    fail(422, 'Erro na compilação LaTeX.', mb_substr($log, 0, MAX_LOG_LENGTH));
 }
 
 $pdf = file_get_contents($pdfPath);
 if ($pdf === false) {
-    fail(500, 'Falha ao ler PDF gerado.', mb_substr($log, 0, 12000));
+    fail(500, 'Falha ao ler PDF gerado.', mb_substr($log, 0, MAX_LOG_LENGTH));
 }
 
 echo json_encode([
     'ok' => true,
     'pdfBase64' => base64_encode($pdf),
-    'log' => mb_substr($log, 0, 12000),
+    'log' => mb_substr($log, 0, MAX_LOG_LENGTH),
 ], JSON_UNESCAPED_UNICODE);

@@ -67,12 +67,16 @@
 (() => {
   const STORAGE_KEY = 'miniLatexProject';
   const TEXT_EXT = ['.tex', '.bib', '.sty', '.cls', '.bst', '.txt', '.md'];
+  const AUTO_COMPILE_DELAY_MS = 1200;
+  const DETACHED_WINDOW_SYNC_DELAY_MS = 300;
+  const utf8Encoder = new TextEncoder();
+  const utf8Decoder = new TextDecoder();
   let project = {
     mainFile: 'main.tex',
     files: {
       'main.tex': {
         isText: true,
-        content: btoa(unescape(encodeURIComponent('\\documentclass{article}\n\\begin{document}\nOlá, miniLatex!\n\\end{document}\n')))
+        content: encodeUtf8('\\documentclass{article}\n\\begin{document}\nOlá, miniLatex!\n\\end{document}\n')
       }
     }
   };
@@ -99,11 +103,23 @@
   };
 
   function decodeUtf8(base64) {
-    try { return decodeURIComponent(escape(atob(base64))); } catch (_) { return atob(base64); }
+    try {
+      const bin = atob(base64);
+      const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+      return utf8Decoder.decode(bytes);
+    } catch (_) { return atob(base64); }
   }
 
   function encodeUtf8(text) {
-    try { return btoa(unescape(encodeURIComponent(text))); } catch (_) { return btoa(text); }
+    try {
+      const bytes = utf8Encoder.encode(text);
+      let bin = '';
+      const chunk = 8192;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode(...bytes.slice(i, i + chunk));
+      }
+      return btoa(bin);
+    } catch (_) { return btoa(text); }
   }
 
   function normalizePath(name) {
@@ -173,7 +189,7 @@
       el.compileLog.textContent = logText || 'Compilação concluída com sucesso.';
     }
     if (detachedWindow && !detachedWindow.closed) {
-      detachedWindow.postMessage({ type: 'preview-update', pdfBase64: lastPdfBase64, log: el.compileLog.textContent }, '*');
+      detachedWindow.postMessage({ type: 'preview-update', pdfBase64: lastPdfBase64, log: el.compileLog.textContent }, window.location.origin);
     }
   }
 
@@ -201,7 +217,7 @@
   function maybeAutoCompile() {
     if (!el.autoCompileSwitch.checked) return;
     clearTimeout(compileTimer);
-    compileTimer = setTimeout(compileProject, 1200);
+    compileTimer = setTimeout(compileProject, AUTO_COMPILE_DELAY_MS);
   }
 
   function exportProject() {
@@ -266,13 +282,14 @@
 
   function openDetachedPreview() {
     if (!detachedWindow || detachedWindow.closed) {
-      detachedWindow = window.open('preview.php', 'miniLatexPreview', 'width=900,height=700');
+      detachedWindow = window.open('preview.php', 'miniLatexPreview', 'width=900,height=700,noopener,noreferrer');
+      if (!detachedWindow) return;
     }
     setTimeout(() => {
       if (detachedWindow && !detachedWindow.closed) {
-        detachedWindow.postMessage({ type: 'preview-update', pdfBase64: lastPdfBase64, log: el.compileLog.textContent }, '*');
+        detachedWindow.postMessage({ type: 'preview-update', pdfBase64: lastPdfBase64, log: el.compileLog.textContent }, window.location.origin);
       }
-    }, 300);
+    }, DETACHED_WINDOW_SYNC_DELAY_MS);
   }
 
   el.importBtn.addEventListener('click', () => el.importInput.click());

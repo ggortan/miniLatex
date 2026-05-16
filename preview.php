@@ -19,6 +19,7 @@
   const pdf = document.getElementById('pdf');
   const log = document.getElementById('log');
   window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin) return;
     if (!event.data || event.data.type !== 'preview-update') return;
     if (event.data.pdfBase64) pdf.src = 'data:application/pdf;base64,' + event.data.pdfBase64;
     log.textContent = event.data.log || '';
