@@ -46,6 +46,7 @@ function runCommand(array $cmd, string $cwd, int $timeout = 20): array {
     $out = '';
     $err = '';
     $start = time();
+    $exitCode = 1;
 
     while (true) {
         $status = proc_get_status($process);
@@ -53,11 +54,13 @@ function runCommand(array $cmd, string $cwd, int $timeout = 20): array {
         $err .= stream_get_contents($pipes[2]);
 
         if (!$status['running']) {
+            $exitCode = isset($status['exitcode']) ? (int) $status['exitcode'] : 0;
             break;
         }
 
         if ((time() - $start) > $timeout) {
             proc_terminate($process);
+            $exitCode = 124;
             break;
         }
 
@@ -67,8 +70,8 @@ function runCommand(array $cmd, string $cwd, int $timeout = 20): array {
     foreach ($pipes as $pipe) {
         fclose($pipe);
     }
-    $code = proc_close($process);
-    return [$code, $out, $err];
+    proc_close($process);
+    return [$exitCode, $out, $err];
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

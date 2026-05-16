@@ -203,7 +203,18 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(project)
       });
-      const data = await res.json();
+      const responseText = await res.text();
+      let data = null;
+      if (responseText) {
+        try {
+          data = JSON.parse(responseText);
+        } catch (_) {
+          throw new Error(responseText);
+        }
+      }
+      if (!data) {
+        throw new Error(`Resposta vazia do servidor (${res.status}).`);
+      }
       if (!res.ok || !data.ok) throw new Error((data && data.error) || 'Falha ao compilar.');
       updatePdf(data.pdfBase64, data.log || 'Compilação concluída com sucesso.');
     } catch (err) {
